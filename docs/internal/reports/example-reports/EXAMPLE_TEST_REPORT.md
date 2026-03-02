@@ -24,7 +24,7 @@ This report documents the syntax alignment with DSL specs and execution status f
 16. generate_timetable_svg.exs
 17. diet_problem.exs
 
-## Overall Compliance: 10/17 = 59%
+## Overall Compliance: 16/17 = 94%
 
 ---
 
