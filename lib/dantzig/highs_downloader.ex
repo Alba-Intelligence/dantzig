@@ -52,17 +52,21 @@ defmodule Dantzig.HiGHSDownloader do
     unpacked =
       :erl_tar.extract({:binary, tar_archive}, [
         :compressed,
-        files: ['bin/highs'],
+        files: [~c"bin/highs"],
         cwd: to_charlist(tmp_dir)
       ])
 
     case unpacked do
-      :ok -> :ok
+      :ok ->
+        :ok
+
       {:error, :eof} ->
         # Even if `:erl_tar.extract/2` return this error,
         # it seems like it unpacks the file correctly
         :ok
-      other -> raise "couldn't unpack archive: #{inspect(other)}"
+
+      other ->
+        raise "couldn't unpack archive: #{inspect(other)}"
     end
 
     bin_path = Path.join([tmp_dir, "bin", "highs"])
@@ -108,9 +112,9 @@ defmodule Dantzig.HiGHSDownloader do
 
   defp tar_gz_url(highs_version, target) do
     "https://github.com/JuliaBinaryWrappers/" <>
-    "HiGHSstatic_jll.jl/releases/download/" <>
-    "HiGHSstatic-v#{highs_version}%2B0/" <>
-    "HiGHSstatic.v#{highs_version}.#{target}.tar.gz"
+      "HiGHSstatic_jll.jl/releases/download/" <>
+      "HiGHSstatic-v#{highs_version}%2B0/" <>
+      "HiGHSstatic.v#{highs_version}.#{target}.tar.gz"
   end
 
   defp fetch_file!(url, retry \\ true) do
