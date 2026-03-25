@@ -611,54 +611,58 @@ defmodule Dantzig.Problem.DSL.ExpressionParser do
                         """
               end
 
-            # Handle Access.get AST nodes (e.g., multiplier[i], cost[worker][task])
+            # Handle Access.get AST nodes (e.g., multiplier[i], cost[worker][task], qty[p])
             # Single level: {{:., _, [Access, :get]}, _, [container_ast, key_ast]}
             # Nested: {{:., _, [Access, :get]}, _, [{{:., _, [Access, :get]}, _, [container, key1]}, key2]}
             # The key itself might also be an Access.get expression (e.g., foods_dict[food][nutrient_to_atom[limit]])
             {{:., _, [Access, :get]}, _, _} = access_expr ->
-              # Recursively evaluate nested Access.get expressions using evaluate_expression_with_bindings
-              # which handles nested Access.get correctly
-              # First, try to evaluate as a constant with bindings
-              case ConstantEvaluation.try_evaluate_constant(access_expr, bindings) do
-                {:ok, val} when is_number(val) ->
-                  Polynomial.const(val)
+              # First check: is the base name a known variable in the problem?
+              # This allows bracket notation for variable access: qty[p], assign[worker][task]
+              case try_parse_access_as_variable(access_expr, bindings, problem) do
+                {:ok, poly} ->
+                  poly
 
-                {:ok, nil} ->
-                  # Provide more helpful error message with binding information
-                  binding_info =
-                    if map_size(bindings) > 0 do
-                      "Available bindings: #{inspect(Map.keys(bindings))}. "
-                    else
-                      "No bindings available. "
-                    end
+                :not_a_variable ->
+                  # Fall through to constant evaluation
+                  case ConstantEvaluation.try_evaluate_constant(access_expr, bindings) do
+                    {:ok, val} when is_number(val) ->
+                      Polynomial.const(val)
 
-                  raise ArgumentError,
-                        "Cannot evaluate constant access expression: #{inspect(access_expr)}. " <>
-                          "The expression evaluated to nil. " <>
-                          binding_info <>
-                          "Ensure the constant exists in model_parameters and indices are valid. " <>
-                          "If using generator bindings (e.g., multiplier[i] where i <- 1..3), " <>
-                          "ensure the binding variable is in scope."
+                    {:ok, nil} ->
+                      binding_info =
+                        if map_size(bindings) > 0 do
+                          "Available bindings: #{inspect(Map.keys(bindings))}. "
+                        else
+                          "No bindings available. "
+                        end
 
-                {:ok, non_numeric_val} ->
-                  raise ArgumentError,
-                        "Constant access expression evaluated to non-numeric value: #{inspect(access_expr)} => #{inspect(non_numeric_val)}"
+                      raise ArgumentError,
+                            "Cannot evaluate constant access expression: #{inspect(access_expr)}. " <>
+                              "The expression evaluated to nil. " <>
+                              binding_info <>
+                              "Ensure the constant exists in model_parameters and indices are valid. " <>
+                              "If using generator bindings (e.g., multiplier[i] where i <- 1..3), " <>
+                              "ensure the binding variable is in scope."
 
-                :error ->
-                  # Provide more helpful error message
-                  binding_info =
-                    if map_size(bindings) > 0 do
-                      "Available bindings: #{inspect(Map.keys(bindings))}. "
-                    else
-                      "No bindings available. "
-                    end
+                    {:ok, non_numeric_val} ->
+                      raise ArgumentError,
+                            "Constant access expression evaluated to non-numeric value: #{inspect(access_expr)} => #{inspect(non_numeric_val)}"
 
-                  raise ArgumentError,
-                        "Cannot evaluate constant access expression: #{inspect(access_expr)}. " <>
-                          binding_info <>
-                          "Ensure the constant exists in model_parameters and indices are valid. " <>
-                          "If using generator bindings (e.g., multiplier[i] where i <- 1..3), " <>
-                          "ensure the binding variable is in scope."
+                    :error ->
+                      binding_info =
+                        if map_size(bindings) > 0 do
+                          "Available bindings: #{inspect(Map.keys(bindings))}. "
+                        else
+                          "No bindings available. "
+                        end
+
+                      raise ArgumentError,
+                            "Cannot evaluate constant access expression: #{inspect(access_expr)}. " <>
+                              binding_info <>
+                              "Ensure the constant exists in model_parameters and indices are valid. " <>
+                              "If using generator bindings (e.g., multiplier[i] where i <- 1..3), " <>
+                              "ensure the binding variable is in scope."
+                  end
               end
 
             _ ->
@@ -667,6 +671,90 @@ defmodule Dantzig.Problem.DSL.ExpressionParser do
         end
     end
   end
+
+  # Attempt to parse a bracket access expression as a variable access.
+  # Returns {:ok, polynomial} if the base name is a known variable in the problem,
+  # or :not_a_variable to fall through to constant evaluation.
+  # This enables unified bracket notation: qty[p] works exactly like qty(p).
+  defp try_parse_access_as_variable(access_expr, bindings, problem) when not is_nil(problem) do
+    case unwrap_access_get_chain(access_expr) do
+      {base_name, key_asts} when is_atom(base_name) ->
+        var_name_str = to_string(base_name)
+        var_map = Problem.get_variables_nd(problem, var_name_str)
+
+        if var_map do
+          resolved_keys =
+            Enum.map(key_asts, fn key_ast ->
+              case key_ast do
+                :_ ->
+                  :_
+
+                {key_name, _, _} when is_atom(key_name) ->
+                  Map.get(bindings, key_name, key_name)
+
+                key_atom when is_atom(key_atom) ->
+                  Map.get(bindings, key_atom, key_atom)
+
+                key when is_binary(key) ->
+                  key
+
+                _ ->
+                  ConstantEvaluation.evaluate_expression_with_bindings(key_ast, bindings)
+              end
+            end)
+
+          poly =
+            if Enum.any?(resolved_keys, &(&1 == :_)) do
+              var_map
+              |> Enum.filter(fn {key, _} ->
+                key_list = Tuple.to_list(key)
+
+                Enum.zip_with(resolved_keys, key_list, fn p, a ->
+                  if p == :_, do: true, else: p == a
+                end)
+                |> Enum.all?()
+              end)
+              |> Enum.reduce(Polynomial.const(0), fn {_k, mono}, acc ->
+                Polynomial.add(acc, mono)
+              end)
+            else
+              key_tuple = List.to_tuple(resolved_keys)
+              Map.get(var_map, key_tuple, Polynomial.const(0))
+            end
+
+          {:ok, poly}
+        else
+          :not_a_variable
+        end
+
+      _ ->
+        :not_a_variable
+    end
+  end
+
+  defp try_parse_access_as_variable(_access_expr, _bindings, _problem), do: :not_a_variable
+
+  # Unwrap a chain of Access.get calls to extract (base_atom, [key_asts]).
+  # E.g. qty[p] → {:qty, [{:p, [], nil}]}
+  #      assign[worker][task] → {:assign, [{:worker, [], nil}, {:task, [], nil}]}
+  # Returns nil if the chain doesn't bottom out in a simple atom.
+  defp unwrap_access_get_chain({{:., _, [Access, :get]}, _, [container_ast, key_ast]}) do
+    case container_ast do
+      {{:., _, [Access, :get]}, _, _} ->
+        case unwrap_access_get_chain(container_ast) do
+          {base, keys} -> {base, keys ++ [key_ast]}
+          nil -> nil
+        end
+
+      {atom_name, _, _} when is_atom(atom_name) ->
+        {atom_name, [key_ast]}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp unwrap_access_get_chain(_), do: nil
 
   # Normalize Dantzig.Polynomial operator calls (from Polynomial.algebra) back to Kernel ops
   defp normalize_polynomial_ops(ast) do

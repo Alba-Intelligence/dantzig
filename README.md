@@ -55,15 +55,15 @@ constraints(a AND b AND c, "Logical AND constraint")
 **Model Parameters**: Pass runtime data directly into your optimization models
 
 ```elixir
-# Use external data in your constraints and objectives
-params = %{costs: [10, 20, 30], capacity: 100}
+# Use a map with integer keys matching the generator range
+# Bracket notation is used uniformly: costs[i] for constants, x[i] for variables
+params = %{costs: %{1 => 10, 2 => 20, 3 => 30}, capacity: 100}
 
 problem = Problem.define(model_parameters: params) do
   variables("x", [i <- 1..3], :integer, min_bound: 0)
 
-  # Access parameters directly by name
-  constraints(sum(for i <- 1..3, do: costs[i] * x(i)) <= capacity, "Budget")
-  objective(sum(for i <- 1..3, do: x(i)), :maximize)
+  constraints(sum(for i <- 1..3, do: costs[i] * x[i]) <= capacity, "Budget")
+  objective(sum(for i <- 1..3, do: x[i]), :maximize)
 end
 ```
 

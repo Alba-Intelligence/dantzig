@@ -21,19 +21,29 @@ end
 
 ## Enumerated Constants
 
-Indexed sets of values (arrays, maps).
+Indexed sets of values (maps with integer or string keys).
 
 **Syntax:**
 
 ```elixir
-# 1D array
+# Map with integer keys (matches generator range exactly)
+# Generator i <- 1..3 produces 1, 2, 3 — keys must match
+model_parameters: %{multiplier: %{1 => 4.0, 2 => 5.0, 3 => 6.0}}
+constraints(sum(for i <- 1..3, do: x[i] * multiplier[i]) <= 10, "...")
+
+# 0-based list (only when generator starts at 0)
 model_parameters: %{multiplier: [4.0, 5.0, 6.0]}
-constraints(sum(for i <- 1..3, do: x(i) * multiplier[i]) <= 10, "...")
+constraints(sum(for i <- 0..2, do: x[i] * multiplier[i]) <= 10, "...")
 
 # 2D map
 model_parameters: %{cost: %{"Alice" => %{"Task1" => 2, "Task2" => 3}}}
-constraints(sum(for w <- workers, do: assign(w, t) * cost[w][t]) <= 10, "...")
+constraints(sum(for w <- workers, do: assign[w][t] * cost[w][t]) <= 10, "...")
 ```
+
+> **Note**: Bracket notation `x[i]` is used uniformly for both constants and variables.
+> Generator variables (e.g. `i` in `[i <- 1..4]`) produce the exact values from the range.
+> Use a map with keys that match those values. Only use a plain list when the range starts at 0,
+> because Elixir list access is 0-based.
 
 **Access Patterns:**
 

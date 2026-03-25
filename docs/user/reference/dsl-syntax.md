@@ -727,9 +727,22 @@ problem2d =
 
 If a symbol is used instead of `:_`, it means "_for each value of the symbol generate a statement_".
 
-- **Pattern matching**: `queen2d(i, :_)` means "_for each value of i generate a statement where all the values of the second iterator (j) are used_".
-- **Pattern matching**: `queen2d(:_, j)` means "_for each value of the second iterator (j) generate a statement where all the values of the first iterator (i) are used_".
-- **All variables**: `queen2d(:_, :_)` means "_generate a single statement where all the values of the first iterator (i) and the second iterator (j) are used_".
+**Bracket notation** (preferred for indexed access):
+
+- `x[i]` — access variable `x` at index `i` (same key as used in the generator)
+- `assign[worker][task]` — access 2D variable at keys `worker`, `task`
+- `x[i][:_]` — wildcard: all values of the second dimension, for fixed `i`
+- `x[:_]` — wildcard: all values of the (1D) variable
+
+Bracket notation uses the generator value directly as the key — the same value used in `variables("x", [i <- 1..n], ...)` is the key for `x[i]`. This allows a **unified syntax** for both variables and constants.
+
+**Parenthesis notation** (alternative, also supports wildcards):
+
+- `queen2d(i, :_)` — "_for each value of i, all values of the second dimension_"
+- `queen2d(:_, j)` — "_all values of the first dimension, for each j_"
+- `queen2d(:_, :_)` — "_all values across both dimensions_"
+
+Both notations support wildcards. Bracket notation is preferred for its uniformity with constant access.
 
 ### 3. Sum Functions
 
@@ -823,25 +836,38 @@ end
 
 #### Enumerated (Indexed) Constants
 
-A _Named enumerated constants_ is an indexed set of values passed in the `model_parameters` dictionary. The index is either integer-like (like in the case of an array), or more general (as in a dictionary). The index can be multidimensional. Here are a list of valid examples.
+A _Named enumerated constant_ is an indexed set of values passed in the `model_parameters` dictionary. The index is either integer-like (like in the case of a map with integer keys), or more general (as in a map with string or atom keys). The index can be multidimensional.
+
+> **Important**: Generator variables (e.g. `i` in `[i <- 1..4]`) produce the exact integer values from the range. Use a map with matching integer keys so that `multiplier[i]` resolves correctly for any range, including non-zero-based ranges like `2..99` or `(-7)..7`.
 
 ```elixir
-# Example 1: indexed list of constants - 1 dimension
-problem = Problem.define(model_parameters: %{multiplier: [4.0, 5.0, 6.0, 7.0]}) do
+# Example 1: indexed constants - 1 dimension, range 1..4
+# Use a map with integer keys matching the generator range.
+# Bracket notation x[i] is used uniformly for both variables and constants.
+problem = Problem.define(model_parameters: %{multiplier: %{1 => 4.0, 2 => 5.0, 3 => 6.0, 4 => 7.0}}) do
   new(name: "Problem Name", description: "Problem description")
   variables( "x", [i <- 1..4], :continuous, "Xs")
 
-  constraints( sum( for i <-  1..4, do: x(i) * multiplier[i]) <= 10, "Max constraint" )
+  constraints( sum( for i <-  1..4, do: x[i] * multiplier[i]) <= 10, "Max constraint" )
 end
 ```
 
 ```elixir
-# Example 1: indexed list of constants - 1 dimension
-problem = Problem.define(model_parameters: %{matrix: [[4.0, 5.0, 6.0], [7.0, 8.0, 9.0]]}) do
+# Example 2: 2D indexed constants, ranges 1..2 and 1..3
+# Use a nested map with integer keys for each dimension
+problem = Problem.define(model_parameters: %{matrix: %{1 => %{1 => 4.0, 2 => 5.0, 3 => 6.0}, 2 => %{1 => 7.0, 2 => 8.0, 3 => 9.0}}}) do
   new(name: "Problem Name", description: "Problem description")
   variables( "x", [i <- 1..2, j <- 1..3], :continuous, "Xs")
 
-  constraints( sum( for i <-  1..2, j <- 1..3, do: x(i, j) * matrix[i][j]) <= 10, "Max constraint" )
+  constraints( sum( for i <-  1..2, j <- 1..3, do: x[i][j] * matrix[i][j]) <= 10, "Max constraint" )
+end
+```
+
+```elixir
+# For 0-based ranges, plain lists work because Elixir list access is 0-based
+problem = Problem.define(model_parameters: %{multiplier: [4.0, 5.0, 6.0, 7.0]}) do
+  variables( "x", [i <- 0..3], :continuous, "Xs")
+  constraints( sum( for i <- 0..3, do: x[i] * multiplier[i]) <= 10, "Max constraint" )
 end
 ```
 
@@ -863,21 +889,21 @@ problem = Problem.define(model_parameters: %{cost: cost_matrix, workers: workers
   variables("assign", [worker <- workers, task <- tasks], :binary, "Assignment variable")
   constraints(
     [task <- tasks],
-    sum(for worker <- workers, do: assign(worker, task)) == 1,
+    sum(for worker <- workers, do: assign[worker][task]) == 1,
     "Each task assigned to exactly one worker #{task}"
   )
   constraints(
     [worker <- workers],
-    sum(for task <- tasks, do: assign(worker, task)) <= 1,
+    sum(for task <- tasks, do: assign[worker][task]) <= 1,
     "Each worker assigned to at most one task #{worker}"
   )
 
-  # Objective: minimize total cost
+  # Objective: minimize total cost — bracket notation for both assign (variable) and cost (constant)
   objective(
     sum(
       for worker <- workers,
           task <- tasks,
-          do: assign(worker, task) * cost[worker][task] # Note the use of normal brackets and square brackets!
+          do: assign[worker][task] * cost[worker][task]
     ),
     :minimize
   )
@@ -902,12 +928,12 @@ problem = Problem.define(model_parameters: %{cost: cost_matrix, workers: workers
   variables("assign", [worker <- workers, task <- tasks], :binary, "Assignment variable")
   constraints(
     [task <- tasks],
-    sum(for worker <- workers, do: assign(worker, task)) == 1,
+    sum(for worker <- workers, do: assign[worker][task]) == 1,
     "Each task assigned to exactly one worker #{task}"
   )
   constraints(
     [worker <- workers],
-    sum(for task <- tasks, do: assign(worker, task)) <= 1,
+    sum(for task <- tasks, do: assign[worker][task]) <= 1,
     "Each worker assigned to at most one task #{worker}"
   )
 
@@ -915,16 +941,16 @@ problem = Problem.define(model_parameters: %{cost: cost_matrix, workers: workers
     sum(
       for worker <- workers,
           task <- tasks,
-          do: assign(worker, task) * cost[worker][task]) >= 0,
+          do: assign[worker][task] * cost[worker][task]) >= 0,
           "The overall cost is positive"
   )
 
-  # Objective: minimize total cost
+  # Objective: minimize total cost — bracket notation for both variables and constants
   objective(
     sum(
       for worker <- workers,
           task <- tasks,
-          do: assign(worker, task) * cost[worker][task] # Note the use of normal brackets and square brackets!
+          do: assign[worker][task] * cost[worker][task]
     ),
     :minimize
   )

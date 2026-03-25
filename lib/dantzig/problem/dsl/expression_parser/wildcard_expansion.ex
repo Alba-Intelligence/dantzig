@@ -47,7 +47,7 @@ defmodule Dantzig.Problem.DSL.ExpressionParser.WildcardExpansion do
   # - Access.get with :_ (e.g., foods[:_])
   # If multiple sources are found, intersect them.
   defp resolve_wildcard_domain(expr, bindings, problem) do
-    var_sets = collect_var_domains_for_wildcard(expr, problem)
+    var_sets = collect_var_domains_for_wildcard(expr, problem, bindings)
     acc_sets = collect_access_domains_for_wildcard(expr, bindings, problem)
     sets = var_sets ++ acc_sets
 
@@ -73,8 +73,9 @@ defmodule Dantzig.Problem.DSL.ExpressionParser.WildcardExpansion do
     end
   end
 
-  # For variable accesses like qty(:_) or x(:_, j), infer the value set from the variable map keys
-  defp collect_var_domains_for_wildcard(expr, problem) do
+  # For variable accesses like qty(:_), x(:_, j), x[i][:_] — infer value set from variable map keys.
+  # Handles both parenthesis form {var_name, _, indices} and chained bracket form x[i][:_].
+  defp collect_var_domains_for_wildcard(expr, problem, bindings \\ %{}) do
     # List of operators to exclude from variable matching
     operators = [:+, :-, :*, :/, :==, :<=, :>=, :<, :>, :., :{}, :|>, :&, :and, :or, :not]
 
@@ -83,6 +84,7 @@ defmodule Dantzig.Problem.DSL.ExpressionParser.WildcardExpansion do
         expr,
         [],
         fn
+          # Parenthesis form: x(i, :_)
           {var_name, _, indices} = node, acc when is_list(indices) and is_atom(var_name) ->
             if var_name not in operators and Enum.any?(indices, &(&1 == :_)) do
               var_map = Problem.get_variables_nd(problem, to_string(var_name)) || %{}
@@ -107,6 +109,23 @@ defmodule Dantzig.Problem.DSL.ExpressionParser.WildcardExpansion do
               {node, acc}
             end
 
+          # Bracket form: x[i][:_] — chained Access.get with :_ as the outermost key
+          {{:., _, [Access, :get]}, _, [_container_ast, :_]} = node, acc ->
+            case unwrap_access_get_chain_for_var(node, problem, bindings) do
+              {_var_name_str, var_map, keys_before_wildcard, wildcard_pos} ->
+                values =
+                  for {key_tuple, _mono} <- var_map,
+                      # All keys up to wildcard position must match
+                      match_prefix?(key_tuple, keys_before_wildcard) do
+                    elem(key_tuple, wildcard_pos)
+                  end
+
+                {node, [MapSet.new(values) | acc]}
+
+              nil ->
+                {node, acc}
+            end
+
           node, acc ->
             {node, acc}
         end,
@@ -117,7 +136,8 @@ defmodule Dantzig.Problem.DSL.ExpressionParser.WildcardExpansion do
   end
 
   # For constant map access like foods[:_][nutrient] or foods[:_].cost
-  defp collect_access_domains_for_wildcard(expr, bindings, _problem) do
+  # Skips Access.get chains whose base is a known variable (handled by collect_var_domains_for_wildcard).
+  defp collect_access_domains_for_wildcard(expr, bindings, problem) do
     {_, sets} =
       Macro.traverse(
         expr,
@@ -125,64 +145,21 @@ defmodule Dantzig.Problem.DSL.ExpressionParser.WildcardExpansion do
         fn
           {{:., _, [Access, :get]}, _, [container_ast, key_ast]} = node, acc ->
             if key_ast == :_ do
-              # Evaluate the container, which might be a constant from model_parameters
-              # Handle both simple atoms (e.g., {:foods, _, nil}) and nested Access.get
-              container =
-                case container_ast do
-                  # Simple atom reference (e.g., {:foods, _, nil})
-                  {container_name, _, _ctx} when is_atom(container_name) ->
-                    # Try to evaluate as constant from model_parameters
-                    case Dantzig.Problem.DSL.ExpressionParser.try_evaluate_constant(
-                           container_ast,
-                           bindings
-                         ) do
-                      {:ok, val} -> val
-                      :error ->
-                        # Fall back to direct evaluation
-                        Dantzig.Problem.DSL.ExpressionParser.evaluate_expression_with_bindings(
-                          container_ast,
-                          bindings
-                        )
-                    end
+              # Skip if the whole chain resolves to a known variable — handled by collect_var_domains_for_wildcard
+              if variable_access_chain?(node, problem) do
+                {node, acc}
+              else
+                container = eval_container(container_ast, bindings)
 
-                  # Nested Access.get (e.g., foods[food][:_])
-                  {{:., _, [Access, :get]}, _, _} ->
-                    # Evaluate the nested access first
-                    case Dantzig.Problem.DSL.ExpressionParser.try_evaluate_constant(
-                           container_ast,
-                           bindings
-                         ) do
-                      {:ok, val} -> val
-                      :error ->
-                        Dantzig.Problem.DSL.ExpressionParser.evaluate_expression_with_bindings(
-                          container_ast,
-                          bindings
-                        )
-                    end
+                domain =
+                  cond do
+                    is_map(container) -> Map.keys(container)
+                    is_list(container) -> 0..(length(container) - 1) |> Enum.to_list()
+                    true -> []
+                  end
 
-                  # Other container expressions
-                  _ ->
-                    case Dantzig.Problem.DSL.ExpressionParser.try_evaluate_constant(
-                           container_ast,
-                           bindings
-                         ) do
-                      {:ok, val} -> val
-                      :error ->
-                        Dantzig.Problem.DSL.ExpressionParser.evaluate_expression_with_bindings(
-                          container_ast,
-                          bindings
-                        )
-                    end
-                end
-
-              domain =
-                cond do
-                  is_map(container) -> Map.keys(container)
-                  is_list(container) -> 0..(length(container) - 1) |> Enum.to_list()
-                  true -> []
-                end
-
-              {node, [MapSet.new(domain) | acc]}
+                {node, [MapSet.new(domain) | acc]}
+              end
             else
               {node, acc}
             end
@@ -194,6 +171,90 @@ defmodule Dantzig.Problem.DSL.ExpressionParser.WildcardExpansion do
       )
 
     sets
+  end
+
+
+  # Returns true if the Access.get chain's base atom is a known variable in the problem.
+  defp variable_access_chain?(access_expr, problem) when not is_nil(problem) do
+    case unwrap_access_get_chain_for_var(access_expr, problem) do
+      {_var_name, _var_map, _prefix, _pos} -> true
+      nil -> false
+    end
+  end
+
+  defp variable_access_chain?(_, _), do: false
+
+  # Unwrap a chained Access.get expression to detect bracket-notation variable access with wildcards.
+  # Returns {var_name_str, var_map, resolved_prefix_keys, wildcard_position} or nil.
+  # E.g. x[1][:_]  → {"x", var_map, [1], 1}
+  #      x[:_]     → {"x", var_map, [], 0}
+  #      x[i][:_]  → {"x", var_map, [bound_i], 1}  (with bindings)
+  defp unwrap_access_get_chain_for_var(access_expr, problem, bindings \\ %{}) do
+    case unwrap_chain(access_expr) do
+      {base_name, key_asts} when is_atom(base_name) ->
+        var_name_str = to_string(base_name)
+        var_map = Problem.get_variables_nd(problem, var_name_str)
+
+        if var_map && Enum.any?(key_asts, &(&1 == :_)) do
+          wildcard_pos =
+            key_asts
+            |> Enum.with_index()
+            |> Enum.find_value(fn {k, i} -> if k == :_, do: i end)
+
+          prefix_keys =
+            key_asts
+            |> Enum.take(wildcard_pos)
+            |> Enum.map(fn
+              {k, _, _} when is_atom(k) -> Map.get(bindings, k, k)
+              k -> k
+            end)
+
+          {var_name_str, var_map, prefix_keys, wildcard_pos}
+        else
+          nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp unwrap_chain({{:., _, [Access, :get]}, _, [container_ast, key_ast]}) do
+    case container_ast do
+      {{:., _, [Access, :get]}, _, _} ->
+        case unwrap_chain(container_ast) do
+          {base, keys} -> {base, keys ++ [key_ast]}
+          nil -> nil
+        end
+
+      {atom_name, _, _} when is_atom(atom_name) ->
+        {atom_name, [key_ast]}
+
+      _ ->
+        nil
+    end
+  end
+
+  defp unwrap_chain(_), do: nil
+
+  defp match_prefix?(key_tuple, prefix_keys) do
+    key_list = Tuple.to_list(key_tuple)
+    Enum.zip(prefix_keys, key_list) |> Enum.all?(fn {p, k} -> p == k end)
+  end
+
+  defp eval_container(container_ast, bindings) do
+    case Dantzig.Problem.DSL.ExpressionParser.try_evaluate_constant(container_ast, bindings) do
+      {:ok, val} -> val
+      :error ->
+        try do
+          Dantzig.Problem.DSL.ExpressionParser.evaluate_expression_with_bindings(
+            container_ast,
+            bindings
+          )
+        rescue
+          _ -> nil
+        end
+    end
   end
 
   # Replace all occurrences of :_ with the concrete value

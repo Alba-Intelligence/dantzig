@@ -93,33 +93,39 @@ end
 Pass runtime data directly into your optimization models:
 
 ```elixir
-# External data for our optimization
+# External data for our optimization.
+# Use maps keyed by product name so parameter[p] resolves correctly
+# when iterating over the same product variable in the generator.
 product_data = %{
-  products: ["Widget", "Gadget", "Tool"],
-  profits: [10, 15, 8],      # Profit per unit
-  materials: [2, 3, 1],       # Material per unit
-  labor: [1, 2, 3],           # Labor hours per unit
+  products:       ["Widget", "Gadget", "Tool"],
+  profit:         %{"Widget" => 10, "Gadget" => 15, "Tool" => 8},
+  material:       %{"Widget" => 2,  "Gadget" => 3,  "Tool" => 1},
+  labor:          %{"Widget" => 1,  "Gadget" => 2,  "Tool" => 3},
   material_limit: 100,
-  labor_limit: 80
+  labor_limit:    80
 }
 
 problem = Problem.define(model_parameters: product_data) do
   new(direction: :maximize)
 
-  # Variables: production quantity for each product
+  # Variables: production quantity for each product (keyed by name)
   variables("qty", [product <- products], :integer, min_bound: 0)
 
-  # Constraints using model parameters directly
-  constraints(sum(materials[i] * qty(products[i]) for i <- 0..2) <= material_limit, "Material")
-  constraints(sum(labor[i] * qty(products[i]) for i <- 0..2) <= labor_limit, "Labor")
+  # Bracket notation is used uniformly for both constants (material[p]) and variables (qty[p])
+  constraints(sum(for p <- products, do: material[p] * qty[p]) <= material_limit, "Material")
+  constraints(sum(for p <- products, do: labor[p]    * qty[p]) <= labor_limit,    "Labor")
 
-  # Objective using model parameters
-  objective(sum(profits[i] * qty(products[i]) for i <- 0..2), :maximize)
+  # Objective: maximize total profit
+  objective(sum(for p <- products, do: profit[p] * qty[p]), :maximize)
 end
 
 {:ok, solution} = Dantzig.solve(problem)
 # Access results...
 ```
+
+> **Tip**: When generator variables are integers from a range like `i <- 1..n`, use maps with
+> matching integer keys (e.g. `%{1 => 10, 2 => 20, 3 => 30}`). Plain Elixir lists use 0-based
+> indexing and are only correct when the range also starts at 0.
 
 ## Incremental Problem Building with Problem.modify
 

@@ -34,12 +34,25 @@ Problem.define(model_parameters: %{limit: 100, budget: 1000}) do
 end
 ```
 
-### Arrays/Lists
+### Arrays/Lists (0-based indexing)
 
 ```elixir
 Problem.define(model_parameters: %{costs: [10, 20, 30]}) do
   variables("x", [i <- 0..2], :continuous)
   constraints(x(i) <= costs[i], "Cost bound")
+end
+```
+
+### Maps with Integer Keys (arbitrary ranges)
+
+When your generator range does not start at 0, use a map with integer keys that match
+the generator values. This ensures `costs[i]` resolves correctly for any `i` in the range.
+
+```elixir
+# Generator i <- 1..3: use a map with keys 1, 2, 3
+Problem.define(model_parameters: %{costs: %{1 => 10, 2 => 20, 3 => 30}}) do
+  variables("x", [i <- 1..3], :continuous)
+  constraints([i <- 1..3], x(i) <= costs[i], "Cost bound #{i}")
 end
 ```
 
