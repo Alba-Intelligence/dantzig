@@ -23,7 +23,7 @@ defmodule Dantzig.Solution.Parser do
 
   defp build_integer(parts) do
     {i, ""} = Integer.parse(to_string(parts))
-    i
+    i * 1.0
   end
 
   line = utf8_string([not: ?\n, not: ?\r], min: 0)

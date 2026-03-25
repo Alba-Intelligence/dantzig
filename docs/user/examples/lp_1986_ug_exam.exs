@@ -20,7 +20,9 @@
 # Profit = £146.667
 
 require Dantzig.Problem, as: Problem
-require Dantzig.Problem.DSL, as: DSL
+
+alias Dantzig.{Polynomial, Solution}
+require Dantzig.Constraint, as: Constraint
 
 IO.puts("=== Linear Programming Example 1986 UG Exam ===")
 IO.puts("Source: OR-Notes by J.E. Beasley")
@@ -52,40 +54,37 @@ IO.puts("  Demand: at least #{demand_ratio} chairs per table")
 IO.puts("  Storage: maximum #{max_tables} tables worth of space")
 IO.puts("")
 
-# Create the optimization problem
+# Create the optimization problem using the imperative API
+# (avoids DSL macro limitations with outer variable references in bounds/descriptions)
+problem = Problem.new(direction: :maximize, name: "1986 UG Exam - Carpenter Production")
+
+{problem, xT} = Problem.new_variable(problem, "xT", type: :integer, min_bound: 0, max_bound: max_tables)
+{problem, xC} = Problem.new_variable(problem, "xC", type: :integer, min_bound: 0)
+
+# Objective: maximise profit
 problem =
-  Problem.define do
-    new(name: "1986 UG Exam - Carpenter Production")
+  problem
+  |> Problem.increment_objective(Polynomial.multiply(xT, profit_table))
+  |> Problem.increment_objective(Polynomial.multiply(xC, profit_chair))
 
-    # Decision variables
-    variables("xT", :integer,
-      min_bound: 0,
-      max_bound: max_tables,
-      description: "Number of tables to make"
-    )
+# Time constraint: 6xT + 3xC <= 40
+time_poly = Polynomial.add(Polynomial.multiply(xT, time_table), Polynomial.multiply(xC, time_chair))
+problem = Problem.add_constraint(problem, Constraint.new_linear(time_poly <= max_hours,
+  name: "total_working_hours"))
 
-    variables("xC", :integer, min_bound: 0, description: "Number of chairs to make")
+# Demand constraint: xC >= 3*xT
+demand_poly = Polynomial.subtract(xC, Polynomial.multiply(xT, demand_ratio))
+problem = Problem.add_constraint(problem, Constraint.new_linear(demand_poly >= 0,
+  name: "demand_ratio"))
 
-    # Time constraint
-    constraints(
-      time_table * xT + time_chair * xC <= max_hours,
-      "Total working hours <= #{max_hours}"
-    )
-
-    # Demand constraint: chairs >= 3 * tables
-    constraints(xC >= demand_ratio * xT, "At least #{demand_ratio} chairs per table")
-
-    # Storage constraint: table space + chair space <= max table space
-    # Table takes 4 units, chair takes 1 unit, max 4 tables = 16 units
-    # So: 4*xT + 1*xC <= 4*4 = 16, or simplified: xT + 0.25*xC <= 4
-    constraints(xT + 0.25 * xC <= 4, "Storage space limit")
-
-    # Objective: maximize profit
-    objective(profit_table * xT + profit_chair * xC, :maximize)
-  end
+# Storage constraint: xT + 0.25*xC <= 4
+storage_poly = Polynomial.add(xT, Polynomial.multiply(xC, 0.25))
+problem = Problem.add_constraint(problem, Constraint.new_linear(storage_poly <= 4,
+  name: "storage_space"))
 
 # Solve the problem
-{solution, objective_value} = Problem.solve(problem, solver: :highs, print_optimizer_input: true)
+{:ok, solution} = Dantzig.solve(problem)
+objective_value = solution.objective
 
 IO.puts("Solution:")
 IO.puts("========")

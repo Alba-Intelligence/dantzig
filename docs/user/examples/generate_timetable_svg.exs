@@ -166,9 +166,9 @@ svg_content =
     """
 
 # Write SVG to file
-File.write!("examples/school_timetable.svg", svg_content)
+File.write!(Path.join(__DIR__, "school_timetable.svg"), svg_content)
 
-IO.puts("✅ SVG timetable generated: examples/school_timetable.svg")
+IO.puts("✅ SVG timetable generated: #{Path.join(__DIR__, "school_timetable.svg")}")
 IO.puts("📊 SVG dimensions: #{width}x#{height}")
 IO.puts("🎨 Includes color-coded subjects and clear layout")
 IO.puts("📝 Ready for embedding in README.md")

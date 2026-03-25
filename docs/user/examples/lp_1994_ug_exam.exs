@@ -94,11 +94,11 @@ problem =
 IO.puts("")
 IO.puts("Variable definitions:")
 problem.variable_defs |> Enum.each(fn {name, var} ->
-  IO.puts("  #{name}: type=#{var.type}, min=#{inspect(var.min)}, max=#{inspect(var.max)}")
+  IO.puts("  #{name}: type=#{var.type}, min=#{inspect(var.min_bound)}, max=#{inspect(var.max_bound)}")
 end)
 
 # Solve the problem
-{solution, objective_value} = Problem.solve(problem, solver: highs, print_optimizer_input:true)
+{solution, objective_value} = Problem.solve(problem, solver: :highs, print_optimizer_input: true)
 
 IO.puts("Solution:")
 IO.puts("========")

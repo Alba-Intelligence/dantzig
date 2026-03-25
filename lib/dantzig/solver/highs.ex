@@ -145,6 +145,16 @@ defmodule Dantzig.HiGHS do
   end
 
   # Sanitize variable/constraint names for LP format (CPLEX-compatible)
+  defp sanitize_name(name) when not is_binary(name) do
+    # Constraint names arriving as AST tuples (unevaluated string interpolation
+    # from the DSL macro) — generate a stable fallback rather than crashing.
+    IO.warn(
+      "LP format: constraint name is not a string (got #{inspect(name)}), using auto-generated name"
+    )
+
+    "c_" <> Integer.to_string(:erlang.unique_integer([:positive, :monotonic]))
+  end
+
   defp sanitize_name(name) when is_binary(name) do
     # Apply LP format constraints: alphanumeric + ! " # $ % & ( ) , . ; ? @ _ ' ~
     # Cannot start with number or period, avoid 'E'/'e' (exponential notation)
@@ -185,11 +195,13 @@ defmodule Dantzig.HiGHS do
 
           # Starts with digit or period - prepend underscore
           true ->
+            prefixed = "_" <> sanitized
+
             IO.warn(
-              "LP format: variable/constraint name '#{name}' was modified to '#{sanitized}' (added underscore prefix)"
+              "LP format: variable/constraint name '#{name}' was modified to '#{prefixed}' (added underscore prefix)"
             )
 
-            sanitized
+            prefixed
         end
 
       _ ->

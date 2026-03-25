@@ -1,159 +1,151 @@
 #!/usr/bin/env elixir
 
-# Supply Chain Network Design Problem - Ultra Complex Example
-# ============================================================
-#
-# This is the most comprehensive example in the Dantzig library, demonstrating
-# a multi-echelon, multi-product supply chain network optimization problem.
-#
-# BUSINESS CONTEXT:
-# A global manufacturing company needs to design an optimal supply chain network
-# spanning multiple continents, with suppliers, manufacturers, warehouses, and retailers.
-# The company produces multiple products and must satisfy demand while minimizing
-# total costs (transportation, facility opening, production, and inventory costs).
-#
-# SUPPLY CHAIN HIERARCHY:
-# Suppliers → Manufacturers → Warehouses → Distribution Centers → Retailers
-#
-# REAL-WORLD APPLICATIONS:
-# - Global manufacturing companies (automotive, electronics, consumer goods)
-# - Pharmaceutical supply chains with regulatory requirements
-# - Food and beverage distribution networks
-# - E-commerce fulfillment networks
-# - Humanitarian supply chains for disaster relief
-# - Military logistics and defense supply chains
-#
-# PROBLEM SCALE:
-# - 3 regions (North America, Europe, Asia-Pacific)
-# - 15 suppliers across regions
-# - 8 manufacturing plants
-# - 12 regional warehouses
-# - 25 distribution centers
-# - 50 retail locations
-# - 4 product families
-# - Multiple transportation modes with different costs and capacities
-#
-# MATHEMATICAL FORMULATION:
-# Variables:
-#   - x[i,j,k] = flow from node i to node j for product k
-#   - y[i,j,t] = transportation mode t from node i to node j
-#   - f[i] = facility opening binary variable for node i
-#   - p[i,k] = production quantity of product k at manufacturer i
-#   - inv[i,k,t] = inventory of product k at node i in period t
-#
-# Parameters:
-#   - demand[r,k] = demand for product k in region r
-#   - supply_cap[s,k] = supply capacity of product k at supplier s
-#   - prod_cap[m,k] = production capacity of product k at manufacturer m
-#   - trans_cost[i,j,t] = transportation cost via mode t from i to j
-#   - fixed_cost[i] = fixed cost to operate facility at node i
-#   - prod_cost[m,k] = production cost per unit of product k at manufacturer m
-#   - inv_cost[i,k] = inventory holding cost per unit
-#
-# Constraints:
-#   - Flow conservation at each node
-#   - Supply capacity constraints
-#   - Production capacity constraints
-#   - Demand satisfaction constraints
-#   - Transportation capacity constraints
-#   - Inventory balance constraints
-#   - Binary facility opening variables
-#
-# Objective: Minimize total cost = transportation + facility + production + inventory costs
-#
-# DSL COMPLEXITY FEATURES DEMONSTRATED:
-# 1. Multi-dimensional variable indexing [supplier, manufacturer, product]
-# 2. Complex constraint patterns with multiple sum operations
-# 3. Binary variables for facility opening decisions
-# 4. Coupling constraints between different variable types
-# 5. Advanced use of model parameters for large datasets
-# 6. Nested comprehensions and generator expressions
-# 7. Complex validation and solution analysis
+# Supply Chain Network Design Problem
 
 require Dantzig.Problem, as: Problem
-require Dantzig.Problem.DSL, as: DSL
 
-# ============================================================================
-# DATA DEFINITION
-# ============================================================================
+suppliers  = ["S_NA", "S_EU", "S_AP"]
+warehouses = ["W_NA", "W_EU", "W_AP"]
+retailers  = ["R_NA", "R_EU", "R_AP"]
+products   = ["Electronics", "Automotive"]
 
-# Geographic regions
-regions = ["North_America", "Europe", "Asia_Pacific"]
-
-# Supply chain nodes by region
-suppliers = %{
-  "North_America" => ["Supplier_NA_1", "Supplier_NA_2", "Supplier_NA_3", "Supplier_NA_4", "Supplier_NA_5"],
-  "Europe" => ["Supplier_EU_1", "Supplier_EU_2", "Supplier_EU_3", "Supplier_EU_4", "Supplier_EU_5"],
-  "Asia_Pacific" => ["Supplier_AP_1", "Supplier_AP_2", "Supplier_AP_3", "Supplier_AP_4", "Supplier_AP_5"]
+# Supply capacities [supplier][product]
+supply_cap = %{
+  "S_NA" => %{"Electronics" => 300, "Automotive" => 200},
+  "S_EU" => %{"Electronics" => 250, "Automotive" => 280},
+  "S_AP" => %{"Electronics" => 350, "Automotive" => 150}
 }
 
-manufacturers = %{
-  "North_America" => ["Manufacturer_NA_1", "Manufacturer_NA_2"],
-  "Europe" => ["Manufacturer_EU_1", "Manufacturer_EU_2", "Manufacturer_EU_3"],
-  "Asia_Pacific" => ["Manufacturer_AP_1", "Manufacturer_AP_2", "Manufacturer_AP_3"]
+# Warehouse throughput capacity [warehouse][product]
+wh_cap = %{
+  "W_NA" => %{"Electronics" => 500, "Automotive" => 400},
+  "W_EU" => %{"Electronics" => 450, "Automotive" => 380},
+  "W_AP" => %{"Electronics" => 420, "Automotive" => 320}
 }
 
-warehouses = %{
-  "North_America" => ["Warehouse_NA_1", "Warehouse_NA_2", "Warehouse_NA_3", "Warehouse_NA_4"],
-  "Europe" => ["Warehouse_EU_1", "Warehouse_EU_2", "Warehouse_EU_3", "Warehouse_EU_4"],
-  "Asia_Pacific" => ["Warehouse_AP_1", "Warehouse_AP_2", "Warehouse_AP_3", "Warehouse_AP_4"]
+# Retailer demand [retailer][product]
+demand = %{
+  "R_NA" => %{"Electronics" => 220, "Automotive" => 180},
+  "R_EU" => %{"Electronics" => 200, "Automotive" => 160},
+  "R_AP" => %{"Electronics" => 180, "Automotive" => 120}
 }
 
-distribution_centers = %{
-  "North_America" => ["DC_NA_1", "DC_NA_2", "DC_NA_3", "DC_NA_4", "DC_NA_5", "DC_NA_6", "DC_NA_7", "DC_NA_8", "DC_NA_9"],
-  "Europe" => ["DC_EU_1", "DC_EU_2", "DC_EU_3", "DC_EU_4", "DC_EU_5", "DC_EU_6", "DC_EU_7"],
-  "Asia_Pacific" => ["DC_AP_1", "DC_AP_2", "DC_AP_3", "DC_AP_4", "DC_AP_5", "DC_AP_6", "DC_AP_7", "DC_AP_8", "DC_AP_9"]
+# Transport cost per unit: supplier → warehouse [s][w][p] (simplified: same for all products)
+trans_sw = %{
+  {"S_NA", "W_NA"} => 2.0, {"S_NA", "W_EU"} => 8.0, {"S_NA", "W_AP"} => 10.0,
+  {"S_EU", "W_NA"} => 8.0, {"S_EU", "W_EU"} => 2.0, {"S_EU", "W_AP"} =>  9.0,
+  {"S_AP", "W_NA"} => 10.0, {"S_AP", "W_EU"} => 9.0, {"S_AP", "W_AP"} =>  2.0
 }
 
-retailers = %{
-  "North_America" => Enum.map(1..20, &"Retailer_NA_#{&1}"),
-  "Europe" => Enum.map(1..18, &"Retailer_EU_#{&1}"),
-  "Asia_Pacific" => Enum.map(1..12, &"Retailer_AP_#{&1}")
+# Transport cost per unit: warehouse → retailer [w][r][p] (simplified: same for all products)
+trans_wr = %{
+  {"W_NA", "R_NA"} => 1.5, {"W_NA", "R_EU"} => 7.0, {"W_NA", "R_AP"} => 9.0,
+  {"W_EU", "R_NA"} => 7.0, {"W_EU", "R_EU"} => 1.5, {"W_EU", "R_AP"} => 8.0,
+  {"W_AP", "R_NA"} => 9.0, {"W_AP", "R_EU"} => 8.0, {"W_AP", "R_AP"} => 1.5
 }
 
-# Product families
-products = ["Electronics", "Automotive", "Consumer_Goods", "Industrial"]
-
-# Transportation modes
-transport_modes = ["Sea", "Air", "Ground", "Rail"]
-
-# ============================================================================
-# PARAMETER DATA
-# ============================================================================
-
-# All nodes for easier iteration
-all_suppliers = Enum.flat_map(suppliers, fn {_region, nodes} -> nodes end)
-all_manufacturers = Enum.flat_map(manufacturers, fn {_region, nodes} -> nodes end)
-all_warehouses = Enum.flat_map(warehouses, fn {_region, nodes} -> nodes end)
-all_dcs = Enum.flat_map(distribution_centers, fn {_region, nodes} -> nodes end)
-all_retailers = Enum.flat_map(retailers, fn {_region, nodes} -> nodes end)
-all_nodes = all_suppliers ++ all_manufacturers ++ all_warehouses ++ all_dcs ++ all_retailers
-
-# Demands by region and product (simplified for demo)
-demand_data = %{
-  "North_America" => %{
-    "Electronics" => 1000,
-    "Automotive" => 800,
-    "Consumer_Goods" => 1500,
-    "Industrial" => 600
-  },
-  "Europe" => %{
-    "Electronics" => 1200,
-    "Automotive" => 700,
-    "Consumer_Goods" => 1800,
-    "Industrial" => 500
-  },
-  "Asia_Pacific" => %{
-    "Electronics" => 900,
-    "Automotive" => 600,
-    "Consumer_Goods" => 1200,
-    "Industrial" => 400
-  }
+# Production cost per unit at each supplier [s][p]
+prod_cost = %{
+  "S_NA" => %{"Electronics" => 10.0, "Automotive" => 15.0},
+  "S_EU" => %{"Electronics" => 11.0, "Automotive" => 14.0},
+  "S_AP" => %{"Electronics" =>  9.0, "Automotive" => 16.0}
 }
 
-# Supply capacities by supplier and product
-supply_capacities = %{
-  "Supplier_NA_1" => %{"Electronics" => 300, "Automotive" => 200, "Consumer_Goods" => 400, "Industrial" => 150},
-  "Supplier_NA_2" => %{"Electronics" => 250, "Automotive" => 300, "Consumer_Goods" => 350, "Industrial" => 200},
-  "Supplier_NA_3" => %{"Electronics" => 200, "Automotive" => 250, "Consumer_Goods" => 300, "Industrial" => 180},
-  "Supplier_NA_4" => %{"Electronics" => 280, "Automotive" => 180, "Consumer_Goods" => 380, "Industrial" => 160},
+IO.puts("=== Supply Chain Network Design ===")
+IO.puts("Suppliers: #{Enum.join(suppliers, ", ")}")
+IO.puts("Warehouses: #{Enum.join(warehouses, ", ")}")
+IO.puts("Retailers: #{Enum.join(retailers, ", ")}")
+IO.puts("Products: #{Enum.join(products, ", ")}")
+IO.puts("")
+
+# Build LP using imperative API
+alias Dantzig.{Polynomial, Solution}
+require Dantzig.Constraint, as: Constraint
+
+problem = Problem.new(direction: :minimize)
+
+# Decision variables:
+# flow_sw[s,w,p] = units of product p shipped from supplier s to warehouse w
+# flow_wr[w,r,p] = units of product p shipped from warehouse w to retailer r
+
+{problem, vars_sw} =
+  Enum.reduce(
+    (for s <- suppliers, w <- warehouses, p <- products, do: {s, w, p}),
+    {problem, %{}},
+    fn {s, w, p}, {prob, vars} ->
+      name = "sw_#{s}_#{w}_#{p}"
+      cost = Map.get(trans_sw, {s, w}, 5.0) + prod_cost[s][p]
+      {prob2, var} = Problem.new_variable(prob, name, min_bound: 0.0, max_bound: supply_cap[s][p])
+      prob3 = Problem.increment_objective(prob2, Polynomial.multiply(var, cost))
+      {prob3, Map.put(vars, {s, w, p}, var)}
+    end
+  )
+
+{problem, vars_wr} =
+  Enum.reduce(
+    (for w <- warehouses, r <- retailers, p <- products, do: {w, r, p}),
+    {problem, %{}},
+    fn {w, r, p}, {prob, vars} ->
+      name = "wr_#{w}_#{r}_#{p}"
+      cost = Map.get(trans_wr, {w, r}, 5.0)
+      {prob2, var} = Problem.new_variable(prob, name, min_bound: 0.0)
+      prob3 = Problem.increment_objective(prob2, Polynomial.multiply(var, cost))
+      {prob3, Map.put(vars, {w, r, p}, var)}
+    end
+  )
+
+# Constraints: demand satisfaction at each retailer
+problem =
+  Enum.reduce((for r <- retailers, p <- products, do: {r, p}), problem, fn {r, p}, prob ->
+    in_flow =
+      Enum.reduce(warehouses, 0.0, fn w, acc ->
+        Polynomial.add(acc, vars_wr[{w, r, p}])
+      end)
+
+    d = demand[r][p]
+    Problem.add_constraint(prob, Constraint.new_linear(in_flow >= d, name: "demand_#{r}_#{p}"))
+  end)
+
+# Constraints: flow conservation at each warehouse (in >= out)
+problem =
+  Enum.reduce((for w <- warehouses, p <- products, do: {w, p}), problem, fn {w, p}, prob ->
+    in_flow  = Enum.reduce(suppliers, 0.0, fn s, acc -> Polynomial.add(acc, vars_sw[{s, w, p}]) end)
+    out_flow = Enum.reduce(retailers, 0.0, fn r, acc -> Polynomial.add(acc, vars_wr[{w, r, p}]) end)
+    cap = wh_cap[w][p]
+
+    prob
+    |> Problem.add_constraint(Constraint.new_linear(in_flow >= out_flow, name: "balance_#{w}_#{p}"))
+    |> Problem.add_constraint(Constraint.new_linear(in_flow <= cap,      name: "wh_cap_#{w}_#{p}"))
+  end)
+
+# Solve
+IO.puts("Solving...")
+
+case Dantzig.solve(problem) do
+  {:ok, solution} ->
+    IO.puts("Status: #{solution.model_status}")
+    IO.puts("Total cost: $#{Float.round(solution.objective, 2)}")
+    IO.puts("")
+
+    IO.puts("Supplier → Warehouse flows (non-zero):")
+    for s <- suppliers, w <- warehouses, p <- products do
+      var_name = "sw_#{s}_#{w}_#{p}"
+      val = Map.get(solution.variables, var_name, 0.0)
+      if val > 0.01 do
+        IO.puts("  #{s} → #{w} [#{p}]: #{Float.round(val, 1)} units")
+      end
+    end
+
+    IO.puts("")
+    IO.puts("Warehouse → Retailer flows (non-zero):")
+    for w <- warehouses, r <- retailers, p <- products do
+      var_name = "wr_#{w}_#{r}_#{p}"
+      val = Map.get(solution.variables, var_name, 0.0)
+      if val > 0.01 do
+        IO.puts("  #{w} → #{r} [#{p}]: #{Float.round(val, 1)} units")
+      end
+    end
+
+  {:error, reason} ->
+    IO.puts("Solver error: #{inspect(reason)}")
+end
