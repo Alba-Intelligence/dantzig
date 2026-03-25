@@ -1,182 +1,113 @@
 # Deprecation Notice
 
-**⚠️ IMPORTANT: Old Syntax Deprecated ⚠️**
+**⚠️ Specific functions deprecated — not the entire imperative/functional API ⚠️**
 
-This document lists the deprecated syntax patterns that should no longer be used in new code.
+This document lists the **specific deprecated functions** that should no longer be used.
+The Functional API (`Problem.new_variable/3`, `Problem.add_constraint/2`,
+`Problem.increment_objective/2`, etc.) is **not deprecated** — it is the stable foundation
+that the DSL expands to, and the correct choice for runtime/dynamic problems.
 
-## Deprecated Syntax Patterns
+## What Is (and Is Not) Deprecated
 
-### 1. Old Imperative Syntax
+### ❌ Deprecated: `Problem.maximize/2` and `Problem.minimize/2`
+
+These functions **replace the entire objective** on every call, making it impossible to build
+up an objective incrementally. They also conflate direction with objective-setting.
 
 **❌ DEPRECATED:**
 
 ```elixir
-# Old imperative approach
-problem = Problem.new(direction: :maximize)
-{problem, x} = Problem.new_variable(problem, "x", min_bound: 0)
-{problem, y} = Problem.new_variable(problem, "y", min_bound: 0)
-problem = Problem.add_constraint(problem, Constraint.new_linear(x + 2*y, :<=, 14))
 problem = Problem.maximize(problem, 3*x + 4*y)
+problem = Problem.minimize(problem, cost)
 ```
 
 **✅ USE INSTEAD:**
 
 ```elixir
-# New DSL approach
-problem = Problem.define do
-  new(name: "Example", direction: :maximize)
-  variables("x", :continuous, min_bound: 0, description: "Variable x")
-  variables("y", :continuous, min_bound: 0, description: "Variable y")
-  constraints(x + 2*y <= 14, "Resource constraint")
-  objective(3*x + 4*y, direction: :maximize)
-end
-```
-
-### 2. Old Constraint Macros
-
-**❌ DEPRECATED:**
-
-```elixir
-# Old constraint creation
-constraint = Dantzig.Constraint.new(x + y == 10, name: "balance")
-constraint = Dantzig.Constraint.new_linear(2*x + 3*y <= 20, name: "capacity")
-problem = Problem.add_constraint(problem, constraint)
-```
-
-**✅ USE INSTEAD:**
-
-```elixir
-# New DSL constraint syntax
-problem = Problem.define do
-  new(name: "Example")
-  variables("x", :continuous)
-  variables("y", :continuous)
-  constraints(x + y == 10, "balance")
-  constraints(2*x + 3*y <= 20, "capacity")
-end
-```
-
-### 3. Old Variable Creation
-
-**❌ DEPRECATED:**
-
-```elixir
-# Old variable creation
-{problem, x} = Problem.new_variable(problem, "x", type: :binary, min_bound: 0, max_bound: 1)
-problem = Problem.variables(problem, "x", quote(do: [i <- 1..4, j <- 1..4]), :binary)
-```
-
-**✅ USE INSTEAD:**
-
-```elixir
-# New DSL variable syntax
-problem = Problem.define do
-  new(name: "Example")
-  variables("x", :binary, min_bound: 0, max_bound: 1, description: "Binary variable")
-  variables("x", [i <- 1..4, j <- 1..4], :binary, "2D variables")
-end
-```
-
-### 4. Old Objective Setting
-
-**❌ DEPRECATED:**
-
-```elixir
-# Old objective setting
-problem = Problem.maximize(problem, 3*x + 4*y)
-problem = Problem.minimize(problem, obj)
-```
-
-**✅ USE INSTEAD:**
-
-```elixir
-# New DSL objective syntax
-problem = Problem.define do
-  new(name: "Example")
-  variables("x", :continuous)
-  variables("y", :continuous)
-  objective(3*x + 4*y, direction: :maximize)
-  # or
-  objective(obj, direction: :minimize)
-end
-```
-
-## Migration Guide
-
-### Step 1: Replace Problem.new() with Problem.define do
-
-```elixir
-# Old
+# Set direction once in new/1; accumulate objective with increment_objective/2
 problem = Problem.new(direction: :maximize)
+problem = Problem.increment_objective(problem, Polynomial.multiply(x, 3))
+problem = Problem.increment_objective(problem, Polynomial.multiply(y, 4))
+```
 
-# New
+Or if you want to set the full objective at once:
+
+```elixir
+problem = Problem.new(direction: :maximize)
+problem = Problem.set_objective(problem, 3*x + 4*y)
+```
+
+---
+
+### ❌ Deprecated: `add_variables/5` macro (explicit `problem` first arg)
+
+**❌ DEPRECATED:**
+
+```elixir
+# Old macro requiring explicit problem threading
+problem = Problem.add_variables(problem, "x", [i <- 1..4, j <- 1..4], :binary, "Queen position")
+```
+
+**✅ USE INSTEAD — DSL style (static problems):**
+
+```elixir
+Problem.define do
+  variables("x", [i <- 1..4, j <- 1..4], :binary, "Queen position")
+end
+```
+
+**✅ USE INSTEAD — Functional API (dynamic/runtime problems):**
+
+```elixir
+{problem, x} = Problem.new_variable(problem, "x_1_1", type: :binary)
+# or in a loop:
+{problem, vars} = Problem.new_variables(problem, names, type: :binary)
+```
+
+---
+
+## What Is NOT Deprecated (Current APIs)
+
+### ✅ The DSL (`Problem.define do … end`)
+
+The preferred style for statically-shaped problems:
+
+```elixir
 problem = Problem.define do
   new(direction: :maximize)
+  variables("x", [i <- 1..3], :continuous, min_bound: 0)
+  constraints([i <- 1..3], x(i) <= 10, "Bound #{i}")
+  objective(sum(x(:_)), direction: :maximize)
 end
 ```
 
-### Step 2: Replace variable creation
+### ✅ The Functional API
+
+The correct choice when problem structure depends on runtime data:
 
 ```elixir
-# Old
-{problem, x} = Problem.new_variable(problem, "x", type: :binary)
-
-# New
-problem = Problem.define do
-  variables("x", :binary, description: "Binary variable")
-end
+problem = Problem.new(direction: :maximize)
+{problem, x} = Problem.new_variable(problem, "x", type: :continuous, min_bound: 0)
+problem = Problem.add_constraint(problem, Constraint.new_linear(x <= 10, name: "bound"))
+problem = Problem.increment_objective(problem, x)
+{:ok, solution} = Dantzig.solve(problem)
 ```
 
-### Step 3: Replace constraint creation
+See the README section **"Choosing an API Style"** for a full comparison of when to use each.
 
-```elixir
-# Old
-problem = Problem.add_constraint(problem, Constraint.new_linear(x + y <= 10))
-
-# New
-problem = Problem.define do
-  variables("x", :continuous)
-  variables("y", :continuous)
-  constraints(x + y <= 10, "Constraint description")
-end
-```
-
-### Step 4: Replace objective setting
-
-```elixir
-# Old
-problem = Problem.maximize(problem, 3*x + 4*y)
-
-# New
-problem = Problem.define do
-  variables("x", :continuous)
-  variables("y", :continuous)
-  objective(3*x + 4*y, direction: :maximize)
-end
-```
+---
 
 ## Timeline
 
-- **v0.2.0**: Old syntax marked as deprecated
-- **v0.3.0**: Old syntax will show deprecation warnings
-- **v1.0.0**: Old syntax will be removed
-
-## Benefits of New Syntax
-
-1. **Cleaner code**: Less boilerplate, more readable
-2. **Better error messages**: DSL provides better error context
-3. **Generator support**: Easy creation of multi-dimensional variables
-4. **Pattern matching**: Natural syntax for constraints and objectives
-5. **Type safety**: Better compile-time checking
+- **v0.2.0**: `maximize/2`, `minimize/2`, and old `add_variables/5` marked as deprecated
+- **v0.3.0**: These will emit deprecation warnings at compile time
+- **v1.0.0**: Deprecated functions will be removed
 
 ## Support
 
-If you need help migrating from old to new syntax, please:
+If you need help, please:
 
 1. Check the [DSL Syntax Reference](../reference/dsl-syntax.md)
 2. Look at the updated examples in the [Examples Directory](../examples/README.md)
 3. Review the [Comprehensive Tutorial](../tutorial/comprehensive.md)
 
----
-
-**Remember: The DSL Syntax Reference is the single source of truth for correct syntax.**

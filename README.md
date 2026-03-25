@@ -6,7 +6,7 @@
 
 **Mathematical Optimization for Elixir** — Write optimization problems naturally, like mathematical notation, with automatic linearization and powerful pattern-based modeling.
 
-> ⚠️ **Important**: Old imperative syntax is deprecated. See [Deprecation Notice](docs/DEPRECATION_NOTICE.md) for migration guide.
+> ℹ️ **Two supported APIs**: The DSL (`Problem.define do…end`) is ideal for static problems; the Functional API (`Problem.new_variable`, `Problem.add_constraint`, etc.) is the right choice for dynamic/runtime problems. Only `Problem.maximize/2` and `Problem.minimize/2` are deprecated. See [Choosing an API Style](#️-choosing-an-api-style) and the [Deprecation Notice](docs/user/guides/DEPRECATION_NOTICE.md).
 
 ```elixir
 require Dantzig.Problem, as: Problem
@@ -220,7 +220,108 @@ Complete, runnable examples are available in the [Examples Directory](docs/user/
 
 See the [Examples Directory](docs/user/examples/README.md) for a complete categorized list of all examples.
 
-## ⚡ HiGHS Solver Integration
+## 🏗️ Choosing an API Style
+
+Dantzig exposes **two current, supported APIs** and one deprecated one. Understanding the difference helps you pick the right tool.
+
+### API 1: The DSL (`Problem.define do … end`)
+
+A compile-time macro that lets you write optimization problems in a declarative, mathematical style. Internally it expands to the Functional API (below) via `DSLReducer`.
+
+```elixir
+require Dantzig.Problem, as: Problem
+
+problem = Problem.define do
+  new(direction: :maximize)
+  variables("x", [i <- 1..3], :continuous, min_bound: 0)
+  constraints([i <- 1..3], x(i) <= 10, "Bound")
+  objective(sum(x(:_)), direction: :maximize)
+end
+```
+
+**Use the DSL when:**
+- The problem structure is **statically known at compile time**
+- You want concise, mathematical notation
+- You're building textbook-style problems (knapsack, N-queens, blending, etc.)
+
+**Limitation:** outer-scope Elixir variables referenced inside `max_bound:`, `description:`, or
+string-interpolated constraint names may not resolve correctly — they are captured as AST, not
+evaluated values. Use `model_parameters:` to pass runtime data into the DSL:
+
+```elixir
+Problem.define(model_parameters: %{capacity: 100}) do
+  new(direction: :minimize)
+  variables("x", [i <- 1..3], :continuous, min_bound: 0)
+  constraints(sum(x(:_)) <= capacity, "Capacity")   # capacity resolved at runtime ✓
+  objective(sum(x(:_)), direction: :minimize)
+end
+```
+
+---
+
+### API 2: The Functional API
+
+Regular Elixir functions that `Problem.define` expands to. Fully public, supported, and the right
+choice for **dynamic problems** where the shape (number of variables, constraints) is determined at
+runtime — for example, from database records or user input.
+
+Key functions:
+
+```elixir
+alias Dantzig.{Polynomial, Constraint}
+require Dantzig.Constraint, as: Constraint
+
+problem = Problem.new(direction: :maximize)
+
+# Add variables one at a time; each returns {updated_problem, polynomial_handle}
+{problem, x} = Problem.new_variable(problem, "x", type: :continuous, min_bound: 0)
+{problem, y} = Problem.new_variable(problem, "y", type: :continuous, min_bound: 0)
+
+# Build the objective incrementally
+problem = problem
+  |> Problem.increment_objective(Polynomial.multiply(x, 3))
+  |> Problem.increment_objective(Polynomial.multiply(y, 4))
+
+# Add constraints (Constraint.new_linear is a macro — require it)
+problem = Problem.add_constraint(problem,
+  Constraint.new_linear(x + 2*y <= 14, name: "resource"))
+
+{:ok, solution} = Dantzig.solve(problem)
+```
+
+**Use the Functional API when:**
+- The problem shape depends on **runtime data** (e.g. from a database or API)
+- You're building a helper that programmatically generates variables or constraints in a loop
+- You need fine-grained control over variable naming
+
+---
+
+### ❌ Deprecated: Old Objective API
+
+The following functions still exist but are **deprecated** and will be removed in v1.0.0:
+
+```elixir
+# ❌ DEPRECATED — sets objective but discards any previously accumulated terms
+problem = Problem.maximize(problem, 3*x + 4*y)
+problem = Problem.minimize(problem, cost)
+```
+
+Replace with:
+
+```elixir
+# ✅ Set direction in new/1, build objective with increment_objective/2
+problem = Problem.new(direction: :maximize)
+problem = Problem.increment_objective(problem, Polynomial.multiply(x, 3))
+problem = Problem.increment_objective(problem, Polynomial.multiply(y, 4))
+
+# or set it all at once with set_objective/2 + direction in new/1
+problem = Problem.set_objective(problem, 3*x + 4*y)
+```
+
+The old `add_variables/5` macro (with explicit `problem` as first arg) is similarly deprecated in
+favour of `variables/5` inside a `define` block or `Problem.new_variable/3` in the Functional API.
+
+
 
 **World-Class Optimization Power**: Dantzig integrates seamlessly with the HiGHS solver, providing access to cutting-edge optimization algorithms.
 
