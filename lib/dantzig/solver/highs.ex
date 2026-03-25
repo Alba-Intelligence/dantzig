@@ -205,6 +205,11 @@ defmodule Dantzig.HiGHS do
   defp direction_to_iodata(:maximize), do: "Maximize"
   defp direction_to_iodata(:minimize), do: "Minimize"
 
+  defp direction_to_iodata(nil) do
+    raise ArgumentError,
+      "Problem direction is not set. Call Problem.new(direction: :maximize) or Problem.new(direction: :minimize)."
+  end
+
   def to_lp_iodata(%Problem{} = problem) do
     constraints = Enum.sort(problem.constraints)
 

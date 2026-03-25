@@ -116,10 +116,12 @@ defmodule Dantzig.Problem do
   def new(opts \\ []) do
     name = Keyword.get(opts, :name)
     description = Keyword.get(opts, :description)
+    direction = Keyword.get(opts, :direction)
 
     %__MODULE__{
       name: name,
-      description: description
+      description: description,
+      direction: direction
     }
   end
 
