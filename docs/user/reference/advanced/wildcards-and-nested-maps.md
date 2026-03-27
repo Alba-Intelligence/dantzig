@@ -119,7 +119,7 @@ end
 
 ### Variable Index Names
 
-When using generator variables to create variable indices, the index values become part of variable names. Both DSL and LP formats use **parenthesis notation**. Only the characters **inside** the parentheses are sanitized for LP compatibility.
+When using generator variables to create variable indices, the index values become part of variable names. Both DSL and LP formats use **bracket notation**. Only the characters **inside** the brackets are sanitized for LP compatibility.
 
 **Example:**
 
@@ -132,17 +132,18 @@ variables("ship", [s <- suppliers, c <- customers], :continuous)
 # DSL level (what you write):
 ship[Supplier A][Customer #1]
 ship[Supplier A][NYC Office]
-ship(Tokyo (Main), Customer #1)
+ship[Tokyo (Main)][Customer #1]
 
-# LP level (parentheses preserved, contents sanitized):
+# LP level (brackets preserved, contents sanitized):
 ship[Supplier_A][Customer_1]
 ship[Supplier_A][NYC_Office]
 ship[Tokyo_Main][Customer_1]
 ```
 
-**Key Point:** Parentheses are **preserved** in LP format. Only spaces and special characters **within** the indices are sanitized.
+**Key Point:** Brackets are **preserved** in LP format. Only spaces and special characters **within** the indices are sanitized.
 
 **Best Practice:** Use simple identifiers when possible:
+
 - ✅ Good: `["supplier_a", "supplier_b"]` → `ship[supplier_a][customer_1]`
 - ⚠️ Works: `["Supplier A", "Tokyo (Main)"]` → `ship[Supplier_A][Tokyo_Main]` (contents sanitized)
 - ❌ Avoid: Excessively long names or extreme special characters
@@ -187,6 +188,7 @@ constraints(
 **Syntax:** `foods[:_][nutrient]`
 
 **Use when:**
+
 - Map keys contain spaces: `"total calories"`
 - Map keys contain special characters: `"protein (g)"`, `"fat %"`
 - Keys are strings (not atoms)
@@ -208,6 +210,7 @@ sum(qty[:_] * foods[:_][nutrient])  # ✅
 **Syntax:** `foods[:_].nutrient`
 
 **Use when:**
+
 - Map keys are simple atoms: `:calories`, `:protein`, `:fat`
 - Keys have no spaces or special characters
 - Cleaner, more Elixir-idiomatic syntax desired
@@ -223,6 +226,7 @@ sum(qty[:_] * foods[:_].nutrient)  # ✅
 ```
 
 **Avoid dot notation when:**
+
 - Keys contain spaces or special chars
 - Would require quoted atom syntax: `.:"complex key"`
 
@@ -248,12 +252,14 @@ The DSL sanitizes names automatically in these contexts:
 3. **Objective name** - When generating LP objective declaration
 
 **What is NOT sanitized:**
+
 - Map keys in `model_parameters` (used only for constant lookup)
 - Values in generator lists (used only for constant lookup)
 
 ### Sanitization Rules
 
 The LP sanitization process:
+
 - Replaces spaces with underscores: `"Supplier A"` → `"Supplier_A"`
 - Removes special characters: `"Item #1"` → `"Item_1"`
 - Adds prefix if starts with digit: `"1st_item"` → `"x_1st_item"`
@@ -265,8 +271,8 @@ The LP sanitization process:
 - **Generator Scope:** Generator variables (like `nutrient`) are evaluated before map access
 - **Type Conversion:** String keys are automatically converted to atom keys when accessing maps
 - **Validation:** The DSL validates that all accessed keys exist in the model parameters
-- **DSL ≡ LP Format:** Both use parentheses `ship[A][B]`, only contents are sanitized `ship[A_sanitized][B_sanitized]`
-- **Parentheses Preserved:** Maintains traceability from DSL to LP output for debugging
+- **DSL ≡ LP Format:** Both use bracket notation `ship[A][B]`, only contents are sanitized `ship[A_sanitized][B_sanitized]`
+- **Brackets Preserved:** Maintains traceability from DSL to LP output for debugging
 
 ## Related Documentation
 
