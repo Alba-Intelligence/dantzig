@@ -75,7 +75,7 @@ defmodule Dantzig.Problem.DSL.ExpressionParser.WildcardExpansion do
 
   # For variable accesses like qty(:_), x(:_, j), x[i][:_] — infer value set from variable map keys.
   # Handles both parenthesis form {var_name, _, indices} and chained bracket form x[i][:_].
-  defp collect_var_domains_for_wildcard(expr, problem, bindings \\ %{}) do
+  defp collect_var_domains_for_wildcard(expr, problem, bindings) do
     # List of operators to exclude from variable matching
     operators = [:+, :-, :*, :/, :==, :<=, :>=, :<, :>, :., :{}, :|>, :&, :and, :or, :not]
 
